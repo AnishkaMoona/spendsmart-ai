@@ -4,25 +4,19 @@ import plotly.express as px
 
 st.set_page_config(page_title="SpendSmart AI", page_icon="💰", layout="wide")
 st.title("💰 SpendSmart AI")
-st.markdown("**Clean & Working Version**")
+st.markdown("**Clean Charts Version**")
 
 uploaded_file = st.file_uploader("Upload your bank statement CSV", type=["csv"])
 
 if uploaded_file is None:
-    st.info("👆 Please upload sample_bank_statement (1).csv")
+    st.info("Upload sample_bank_statement (1).csv")
     st.stop()
 
-# Robust CSV reading
-try:
-    df = pd.read_csv(uploaded_file, encoding='utf-8')
-except:
-    df = pd.read_csv(uploaded_file, encoding='ISO-8859-1')
+# Load CSV
+df = pd.read_csv(uploaded_file)
 
-# Flexible date parsing
+# Fix date parsing
 df['Date'] = pd.to_datetime(df['Date'], format='%d-%m-%Y', errors='coerce')
-if df['Date'].isna().all():
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-
 df = df.dropna(subset=['Date']).copy()
 df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce')
 df = df[df['Amount'] != 0].copy()
@@ -39,18 +33,24 @@ def categorize(desc):
 
 df['Category'] = df['Description'].apply(categorize)
 
+# Clean Monthly Grouping
+df['Month'] = df['Date'].dt.to_period('M').dt.strftime('%b %Y')
+
 # ====================== DASHBOARD ======================
 st.metric("Total Spent", f"SGD {df['Amount'].sum():,.0f}")
 
 col1, col2 = st.columns(2)
+
 with col1:
     cat_df = df.groupby('Category')['Amount'].sum().reset_index()
-    st.plotly_chart(px.pie(cat_df, values='Amount', names='Category', title="Spending Breakdown"), use_container_width=True)
+    fig_pie = px.pie(cat_df, values='Amount', names='Category', title="Spending Breakdown")
+    st.plotly_chart(fig_pie, use_container_width=True)
 
 with col2:
-    df['Month'] = df['Date'].dt.to_period('M').astype(str)
     monthly = df.groupby('Month')['Amount'].sum().reset_index()
-    st.plotly_chart(px.bar(monthly, x='Month', y='Amount', title="Monthly Spending Trend"), use_container_width=True)
+    fig_bar = px.bar(monthly, x='Month', y='Amount', title="Monthly Spending Trend")
+    fig_bar.update_layout(xaxis_title="Month", yaxis_title="Amount (SGD)")
+    st.plotly_chart(fig_bar, use_container_width=True)
 
-st.success("✅ App is working!")
-st.caption("SpendSmart AI • Simple Working Version by Anishka Moona")
+st.success("✅ Charts should look clean now!")
+st.caption("SpendSmart AI • Anishka Moona")
