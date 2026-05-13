@@ -27,7 +27,7 @@ def save_to_db(df, source):
                     (row['Date'].strftime('%Y-%m-%d'), row['Description'], float(row['Amount']), row.get('Category', 'Others'), source))
     conn.commit()
 
-# ====================== UPLOAD ======================
+# ====================== UPLOAD with Encoding Fix ======================
 st.sidebar.header("Upload Bank Statement")
 uploaded_file = st.sidebar.file_uploader("CSV or PDF", type=["csv", "pdf"])
 
@@ -37,11 +37,23 @@ if uploaded_file:
     if uploaded_file.name.endswith('.pdf'):
         with pdfplumber.open(uploaded_file) as pdf:
             text = "\n".join([page.extract_text() or "" for page in pdf.pages])
-        st.warning("PDF parsing is basic. Best results with CSV.")
-        # For now, show raw text
-        st.text_area("Extracted Text", text, height=200)
+        st.warning("PDF parsing is basic for now. Best results with CSV.")
+        st.text_area("Extracted Text from PDF", text[:1000], height=200)
+        
     else:
-        df = pd.read_csv(uploaded_file)
+        # FIXED: Multiple encoding attempts
+        try:
+            df = pd.read_csv(uploaded_file, encoding='utf-8')
+        except UnicodeDecodeError:
+            try:
+                df = pd.read_csv(uploaded_file, encoding='utf-8-sig')  # Handles BOM
+            except UnicodeDecodeError:
+                try:
+                    df = pd.read_csv(uploaded_file, encoding='ISO-8859-1')
+                except:
+                    st.error("Could not read the CSV file. Please save it as UTF-8 encoding.")
+                    st.stop()
+        
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         df = df.dropna(subset=['Date'])
         df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce')
@@ -50,23 +62,26 @@ if uploaded_file:
             desc = str(desc).lower()
             if any(k in desc for k in ['grab','taxi','mrt','bus','comfort']): return 'Transport'
             if any(k in desc for k in ['food','restaurant','hawker','starbucks','coffee']): return 'Food & Dining'
-            if any(k in desc for k in ['shopee','lazada','amazon','shopping']): return 'Shopping'
+            if any(k in desc for k in ['shopee','lazada','amazon','taobao','shopping']): return 'Shopping'
             if any(k in desc for k in ['netflix','spotify','disney','gym']): return 'Subscriptions'
             if any(k in desc for k in ['salary','credit','transfer in']): return 'Income'
             return 'Others'
         
         df['Category'] = df['Description'].apply(categorize)
         save_to_db(df, uploaded_file.name)
-        st.success(f"✅ Saved {len(df)} transactions!")
+        st.success(f"✅ Loaded and saved {len(df)} transactions!")
 
-# Load all history
+# Load history
 df_all = pd.read_sql("SELECT * FROM transactions", conn)
 if not df_all.empty:
     df_all['Date'] = pd.to_datetime(df_all['Date'])
-    df = df_all
+    if df.empty:
+        df = df_all
+    else:
+        df = pd.concat([df, df_all], ignore_index=True)
 
 if df.empty:
-    st.info("Upload a statement to begin analysis")
+    st.info("Upload a statement to begin")
     st.stop()
 
 # ====================== DASHBOARD ======================
@@ -82,8 +97,8 @@ with col2:
     monthly = df.groupby('Month')['Amount'].sum().reset_index()
     st.plotly_chart(px.bar(monthly, x='Month', y='Amount', title="Monthly Trend"), use_container_width=True)
 
-# ====================== ML ANOMALY DETECTION ======================
-st.subheader("🔍 ML Anomaly Detection (Isolation Forest)")
+# ====================== ML ANOMALY ======================
+st.subheader("🔍 ML Anomaly Detection")
 features = pd.get_dummies(df[['Category']])
 features['Amount'] = df['Amount']
 
@@ -98,19 +113,17 @@ st.dataframe(df[df['Anomaly'] == 'Unusual ⚠️'][['Date','Description','Amount
 
 # ====================== AI CHAT ======================
 st.subheader("💬 Ask AI")
-query = st.text_input("E.g. What are my biggest spending leaks?")
+query = st.text_input("E.g. What are my biggest spending leaks this month?")
 if query and st.button("Get Insight"):
     client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-    context = f"Total spent: SGD {df['Amount'].sum():,.0f}\nCategories: {df.groupby('Category')['Amount'].sum().to_dict()}\nUnusual transactions: {len(df[df['Anomaly']=='Unusual ⚠️'])}"
+    context = f"Total spent: SGD {df['Amount'].sum():,.0f}\nCategories: {df.groupby('Category')['Amount'].sum().to_dict()}\nUnusual: {len(df[df['Anomaly']=='Unusual ⚠️'])}"
     
     resp = client.chat.completions.create(
         model="llama3-70b-8192",
-        messages=[
-            {"role": "system", "content": "You are an expert personal finance advisor."},
-            {"role": "user", "content": f"{context}\n\nQuestion: {query}"}
-        ],
+        messages=[{"role": "system", "content": "Expert personal finance advisor."},
+                  {"role": "user", "content": f"{context}\n\nQuestion: {query}"}],
         temperature=0.7
     )
     st.success(resp.choices[0].message.content)
 
-st.caption("SpendSmart AI • Built by Anishka Moona • ML + PDF + SQLite + MCP Ready")
+st.caption("SpendSmart AI • Built by Anishka Moona")
