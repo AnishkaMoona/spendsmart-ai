@@ -1,91 +1,43 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import sqlite3
-from groq import Groq
-import os
-from dotenv import load_dotenv
-import pdfplumber
-from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import StandardScaler
-
-load_dotenv()
 
 st.set_page_config(page_title="SpendSmart AI", page_icon="💰", layout="wide")
 st.title("💰 SpendSmart AI")
-st.markdown("**Fixed • PDF + CSV • ML Anomaly Detection**")
+st.markdown("**Clean & Working Version**")
 
-# ====================== DATABASE ======================
-conn = sqlite3.connect('spendsmart.db', check_same_thread=False)
-conn.execute('''CREATE TABLE IF NOT EXISTS transactions 
-             (id INTEGER PRIMARY KEY, date TEXT, description TEXT, amount REAL, category TEXT, source TEXT)''')
+uploaded_file = st.file_uploader("Upload your bank statement CSV", type=["csv"])
 
-def save_to_db(df, source):
-    for _, row in df.iterrows():
-        conn.execute("""INSERT OR IGNORE INTO transactions 
-                     (date, description, amount, category, source) 
-                     VALUES (?, ?, ?, ?, ?)""",
-                    (row['Date'].strftime('%Y-%m-%d'), 
-                     row['Description'], 
-                     float(row['Amount']), 
-                     row.get('Category', 'Others'), 
-                     source))
-    conn.commit()
-
-# ====================== UPLOAD ======================
-st.sidebar.header("Upload Bank Statement")
-uploaded_file = st.sidebar.file_uploader("CSV or PDF", type=["csv", "pdf"])
-
-df = pd.DataFrame()
-
-if uploaded_file:
-    try:
-        if uploaded_file.name.endswith('.pdf'):
-            with pdfplumber.open(uploaded_file) as pdf:
-                text = "\n".join([page.extract_text() or "" for page in pdf.pages])
-            st.text_area("PDF Extracted Text", text[:1500], height=250)
-            st.info("Use CSV for full analysis")
-        else:
-            df = pd.read_csv(uploaded_file, encoding='utf-8')
-            
-            # Flexible date parsing
-            df['Date'] = pd.to_datetime(df['Date'], format='%d-%m-%Y', errors='coerce')
-            if df['Date'].isna().all():
-                df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-            
-            df = df.dropna(subset=['Date'])
-            df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce')
-            df = df[df['Amount'] != 0].copy()
-            
-            def categorize(desc):
-                desc = str(desc).lower()
-                if any(k in desc for k in ['grab','taxi','mrt','bus']): return 'Transport'
-                if any(k in desc for k in ['food','restaurant','hawker','starbucks','coffee']): return 'Food & Dining'
-                if any(k in desc for k in ['shopee','lazada','amazon','shopping']): return 'Shopping'
-                if any(k in desc for k in ['netflix','spotify']): return 'Subscriptions'
-                if any(k in desc for k in ['salary','credit']): return 'Income'
-                return 'Others'
-            
-            df['Category'] = df['Description'].apply(categorize)
-            save_to_db(df, uploaded_file.name)
-            st.success(f"✅ Loaded {len(df)} transactions!")
-            
-    except Exception as e:
-        st.error(f"Error processing file: {str(e)}")
-        st.stop()
-
-# Load history safely
-df_all = pd.read_sql("SELECT * FROM transactions", conn)
-if not df_all.empty:
-    df_all['Date'] = pd.to_datetime(df_all['Date'], errors='coerce')
-    if df.empty:
-        df = df_all
-    else:
-        df = pd.concat([df, df_all], ignore_index=True).drop_duplicates()
-
-if df.empty:
-    st.info("👆 Upload your sample CSV to test")
+if uploaded_file is None:
+    st.info("👆 Please upload sample_bank_statement (1).csv")
     st.stop()
+
+# Robust CSV reading
+try:
+    df = pd.read_csv(uploaded_file, encoding='utf-8')
+except:
+    df = pd.read_csv(uploaded_file, encoding='ISO-8859-1')
+
+# Flexible date parsing
+df['Date'] = pd.to_datetime(df['Date'], format='%d-%m-%Y', errors='coerce')
+if df['Date'].isna().all():
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+
+df = df.dropna(subset=['Date']).copy()
+df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce')
+df = df[df['Amount'] != 0].copy()
+
+# Categorization
+def categorize(desc):
+    desc = str(desc).lower()
+    if any(k in desc for k in ['grab','taxi','mrt','bus']): return 'Transport'
+    if any(k in desc for k in ['food','restaurant','hawker','starbucks','coffee']): return 'Food & Dining'
+    if any(k in desc for k in ['shopee','lazada','amazon','shopping']): return 'Shopping'
+    if any(k in desc for k in ['netflix','spotify']): return 'Subscriptions'
+    if any(k in desc for k in ['salary','credit']): return 'Income'
+    return 'Others'
+
+df['Category'] = df['Description'].apply(categorize)
 
 # ====================== DASHBOARD ======================
 st.metric("Total Spent", f"SGD {df['Amount'].sum():,.0f}")
@@ -100,20 +52,5 @@ with col2:
     monthly = df.groupby('Month')['Amount'].sum().reset_index()
     st.plotly_chart(px.bar(monthly, x='Month', y='Amount', title="Monthly Spending Trend"), use_container_width=True)
 
-# ML Anomaly
-if len(df) > 5:
-    st.subheader("🔍 ML Anomaly Detection")
-    features = pd.get_dummies(df[['Category']])
-    features['Amount'] = df['Amount']
-    scaler = StandardScaler()
-    features_scaled = scaler.fit_transform(features)
-    
-    iso = IsolationForest(contamination=0.1, random_state=42)
-    df['Anomaly'] = iso.fit_predict(features_scaled)
-    df['Anomaly'] = df['Anomaly'].map({1: 'Normal', -1: 'Unusual ⚠️'})
-    
-    anomalies = df[df['Anomaly'] == 'Unusual ⚠️']
-    if not anomalies.empty:
-        st.dataframe(anomalies[['Date','Description','Amount','Category']])
-
-st.caption("SpendSmart AI • Anishka Moona")
+st.success("✅ App is working!")
+st.caption("SpendSmart AI • Simple Working Version by Anishka Moona")
